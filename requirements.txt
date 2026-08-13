@@ -1,0 +1,37 @@
+# Web API
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.1
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+
+# Database
+sqlalchemy==2.0.35
+alembic==1.13.2
+psycopg2-binary==2.9.9
+
+# Crawler
+# Scrapy 2.13 replaced Spider.start_requests() with an async start(), and 2.17
+# removed the old method from the base class entirely -- a spider defining only
+# start_requests() there crawls nothing without raising. Do not drop below 2.13.
+scrapy>=2.13,<3
+apscheduler==3.10.4
+httpx==0.27.0
+lxml==5.2.2
+
+# Company data ingestion
+openpyxl==3.1.5
+pdfplumber==0.11.0
+
+# Scoring
+scikit-learn==1.5.1
+# Claude reads the shortlisted notices and returns the structured assessment.
+anthropic>=0.69,<1
+
+# Auth
+# bcrypt is used directly rather than through passlib: passlib 1.7.4 is
+# unmaintained and misreports password length against bcrypt 4/5, rejecting
+# even short passwords.
+bcrypt>=4.1,<6
+python-jose[cryptography]>=3.3,<4
+python-multipart>=0.0.9

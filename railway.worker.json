@@ -1,0 +1,13 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "//": "Crawler worker. Deploy a SECOND Railway service from this same repo, set its config path to railway.worker.json, and share the API service's DATABASE_URL. It has no HTTP port, so it gets no healthcheck and no public domain.",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "./docker-entrypoint.sh worker",
+    "restartPolicyType": "ALWAYS",
+    "numReplicas": 1
+  }
+}

@@ -1,0 +1,28 @@
+import scrapy
+
+
+class ProcurementNoticeItem(scrapy.Item):
+    notice_id = scrapy.Field()
+    notice_type = scrapy.Field()
+    noticedate = scrapy.Field()
+    notice_status = scrapy.Field()
+    submission_deadline = scrapy.Field()
+    project_id = scrapy.Field()
+    project_name = scrapy.Field()
+    project_country = scrapy.Field()
+    bid_reference_no = scrapy.Field()
+    bid_description = scrapy.Field()
+    procurement_group = scrapy.Field()
+    procurement_method_code = scrapy.Field()
+    procurement_method_name = scrapy.Field()
+    sector = scrapy.Field()
+    contact_organization = scrapy.Field()
+    contact_name = scrapy.Field()
+    contact_email = scrapy.Field()
+    contact_phone = scrapy.Field()
+    contact_address = scrapy.Field()
+    notice_text = scrapy.Field()
+    notice_text_clean = scrapy.Field()
+    parsed_fields = scrapy.Field()
+    notice_url = scrapy.Field()
+    content_hash = scrapy.Field()
