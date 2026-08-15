@@ -1,14 +1,35 @@
-# Backend stack: Postgres, the FastAPI API and the scheduled crawler.
+# The crawler on its own, against a local Postgres.
 #
-#   docker compose up -d --build          bring up db + api + worker
-#   docker compose run --rm api seed      load company data and the first user
-#   docker compose run --rm api crawl     one-off crawl instead of the schedule
-#   docker compose run --rm api score     re-run the heuristic scorer
+#   docker compose up -d crawler-server          the 12-hourly schedule + the trigger endpoint
+#   docker compose run --rm crawler              one full cycle: crawl, score, assess
+#   docker compose run --rm crawler crawl        crawl only
+#   docker compose run --rm crawler score --llm  re-score and re-assess
+#   docker compose --profile worker up -d        loop on the interval, with no trigger endpoint
 #
-# The frontend is deployed separately (Vercel); to run the whole product
-# locally including the UI, use the compose file in the parent directory.
+# `crawler` is a one-shot job, so it is started with `run`, not `up`. Note that
+# the schema is owned by the tender-intelligence app: point this at a database
+# that app has already migrated (`npm run db:migrate`) and seeded (`npm run
+# seed`), or the scoring stage will have no company profile to match against.
+#
+# To run the whole product locally including the UI, use the compose file in the
+# parent directory instead.
 
-name: tender-intelligence
+name: tender-intelligence-crawler
+
+x-crawler-env: &crawler-env
+  # Inside the network the database is reachable by service name on 5432,
+  # regardless of which port it is published on.
+  DATABASE_URL: postgresql://${POSTGRES_USER:-pguser}:${POSTGRES_PASSWORD:-pgpass123}@db:5432/${POSTGRES_DB:-tender-intelligence}
+  CRAWL_DAYS: ${CRAWL_DAYS:-7}
+  CRAWL_ROWS: ${CRAWL_ROWS:-500}
+  CRAWL_INTERVAL_HOURS: ${CRAWL_INTERVAL_HOURS:-12}
+  CRAWLER_TRIGGER_TOKEN: ${CRAWLER_TRIGGER_TOKEN:-dev-only-change-me}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+  LLM_LIMIT: ${LLM_LIMIT:-300}
+  LLM_CONCURRENCY: ${LLM_CONCURRENCY:-4}
+  SKIP_LLM: ${SKIP_LLM:-false}
 
 services:
   db:
@@ -30,34 +51,36 @@ services:
       timeout: 5s
       retries: 10
 
-  api:
+  # The always-on shape: the recurring cycle plus the endpoint the app's
+  # dashboard button calls. Published on the host so a `next dev` running
+  # outside compose can reach it at http://localhost:8080.
+  crawler-server:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["api"]
+    command: ["serve"]
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      # Inside the network the database is reachable by service name on 5432,
-      # regardless of which port it is published on.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-pguser}:${POSTGRES_PASSWORD:-pgpass123}@db:5432/${POSTGRES_DB:-tender-intelligence}
-      PORT: 8000
-      # alembic owns the schema here, so the app must not create tables itself.
-      AUTO_CREATE_TABLES: "false"
-      RUN_MIGRATIONS: "true"
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
-      ACCESS_TOKEN_TTL_HOURS: ${ACCESS_TOKEN_TTL_HOURS:-12}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
-      SEED_USER_EMAIL: ${SEED_USER_EMAIL:-operationals@amana.id}
-      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
-      SEED_USER_NAME: ${SEED_USER_NAME:-AMANA Operations}
+    environment: *crawler-env
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${CRAWLER_PORT:-8080}:8080"
+
+  crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["cron"]
+    # A batch job: it runs once and exits, so it must not be restarted.
+    restart: "no"
+    # Behind a profile so a bare `up` starts the server without also firing a
+    # one-shot cycle at the same database.
+    profiles: ["cron"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *crawler-env
 
   worker:
     build:
@@ -65,21 +88,13 @@ services:
       dockerfile: Dockerfile
     command: ["worker"]
     restart: unless-stopped
+    # Behind a profile so a bare `up` does not run the loop *and* the one-shot
+    # job against the same database. Start it with `--profile worker`.
+    profiles: ["worker"]
     depends_on:
       db:
         condition: service_healthy
-      api:
-        condition: service_started
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-pguser}:${POSTGRES_PASSWORD:-pgpass123}@db:5432/${POSTGRES_DB:-tender-intelligence}
-      AUTO_CREATE_TABLES: "false"
-      # The API service already applied them; a second migrate on boot would
-      # only race it.
-      RUN_MIGRATIONS: "false"
-      CRAWL_INTERVAL_HOURS: ${CRAWL_INTERVAL_HOURS:-6}
-      CRAWL_DAYS: ${CRAWL_DAYS:-7}
-      CRAWL_ROWS: ${CRAWL_ROWS:-500}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    environment: *crawler-env
 
 volumes:
   pgdata:

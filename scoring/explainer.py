@@ -3,7 +3,7 @@
 The explanation is generated from the same numbers that produced the score, so
 the narrative and the dimension bars in the UI can never disagree.
 """
-from api.scoring.engine_constants import (
+from scoring.engine_constants import (
     PURSUE_THRESHOLD,
     REVIEW_THRESHOLD,
     dimension_label,

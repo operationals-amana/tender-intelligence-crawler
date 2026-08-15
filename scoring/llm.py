@@ -29,7 +29,7 @@ from typing import Dict, List, Optional
 
 import anthropic
 
-from api.scoring.matcher import COMPETENCY_WEIGHTS
+from scoring.matcher import COMPETENCY_WEIGHTS
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 
@@ -86,6 +86,20 @@ ASSESSMENT_SCHEMA = {
             "description": "AMANA capability domains this scope draws on. Use exact domain names from the profile.",
             "items": {"type": "string"},
         },
+        "practice_groups": {
+            "type": "array",
+            "description": (
+                "Which of AMANA's client-facing practice groups this opportunity belongs to, "
+                "most relevant first. Choose only from: Strategy and Transformation, Digital, "
+                "Health, Education. Name a second or third group only where the scope genuinely "
+                "draws on it -- a national health data platform is Health and Digital both. "
+                "Return an empty array when the scope sits outside all four."
+            ),
+            "items": {
+                "type": "string",
+                "enum": ["Strategy and Transformation", "Digital", "Health", "Education"],
+            },
+        },
         "suggested_team": {
             "type": "array",
             "description": "Named people from the roster who should staff this bid, each with their role. Use exact names from the profile.",
@@ -131,6 +145,7 @@ ASSESSMENT_SCHEMA = {
         "rationale",
         "scope_summary",
         "matched_capabilities",
+        "practice_groups",
         "suggested_team",
         "relevant_projects",
         "key_requirements",
@@ -179,6 +194,10 @@ How to judge:
   delivery risk worth flagging.
 - Only name people and projects that appear in the profile, spelled exactly as written there. Never
   invent a name, a project, or a credential.
+- Assign practice groups on what the client wants delivered, not on the sector the project sits in.
+  A road-safety programme is not Health because it reduces injuries; a hospital construction
+  supervision role is not Health advisory. Where the scope genuinely spans two groups, name both.
+  Operations is AMANA's internal function and is never an option here.
 - When the notice text is thin or ambiguous, say so through the confidence field rather than
   guessing.
 

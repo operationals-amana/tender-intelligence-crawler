@@ -42,19 +42,23 @@ RUN pip install --no-index --find-links=/wheels -r requirements.txt \
 COPY . .
 
 # Scrapy writes its cache and job directories relative to the working
-# directory, and the API triggers crawls as subprocesses, so /app has to be
-# writable by the unprivileged runtime user.
+# directory, so /app has to be writable by the unprivileged runtime user.
 RUN chmod +x docker-entrypoint.sh \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 8000
+# The `serve` role listens here for the dashboard's "Start crawling" trigger and
+# schedules the recurring cycle. The batch roles (`cron`, `crawl`, `score`) bind
+# nothing and simply exit -- EXPOSE is a declaration, not a requirement, so the
+# same image serves both shapes.
+EXPOSE 8080
 
-# Railway uses healthcheckPath from railway.json instead; this covers compose
-# and any plain `docker run`.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
-    CMD python -c "import os,sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT','8000') + '/health', timeout=4).status == 200 else 1)"
+# /health is the only unauthenticated endpoint, and it answers "is the process
+# up" rather than "is a crawl healthy" -- a crawl that failed must not fail the
+# probe and get the service restarted out from under the next one.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os,sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT','8080') + '/health', timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["api"]
+CMD ["serve"]

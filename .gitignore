@@ -4,3 +4,7 @@ __pycache__/
 .env
 venv/
 .scrapy/
+# Company spreadsheets are no longer read here — seeding moved to the
+# tender-intelligence app. Ignored so they cannot drift back in: they carry
+# KTP and BPJS numbers for every employee.
+data/

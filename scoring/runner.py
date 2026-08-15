@@ -9,7 +9,7 @@ from typing import Iterable, Optional
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from api.scoring.engine import ACTIONABLE_NOTICE_TYPES, ScoringEngine
+from scoring.engine import ACTIONABLE_NOTICE_TYPES, ScoringEngine
 from crawler.models import Tender, TenderScore
 
 
@@ -20,6 +20,10 @@ def active_tender_query(db: Session, include_expired: bool = False):
         # Contract Awards are already decided and have no deadline, so without
         # this filter they would slip through the "no deadline" branch below.
         Tender.notice_type.in_(ACTIONABLE_NOTICE_TYPES),
+        # One opportunity, one score. Where two banks advertise the same package
+        # the canonical row is scored and the linked copies are skipped, so the
+        # board does not show one piece of work twice.
+        Tender.duplicate_of_id.is_(None),
     )
     if not include_expired:
         now = datetime.now(timezone.utc)
@@ -47,7 +51,7 @@ def score_tenders(
     if not engine.is_ready:
         raise RuntimeError(
             "Scoring engine has no company data to match against. "
-            "Run `python -m api.seed.run_all` first."
+            "Seed it from the tender-intelligence app first: `npm run seed`."
         )
 
     query = active_tender_query(db, include_expired=include_expired)
@@ -139,6 +143,7 @@ def _apply_assessment(score: TenderScore, assessment) -> None:
     score.llm_rationale = data.get("rationale")
     score.llm_scope_summary = data.get("scope_summary")
     score.llm_matched_capabilities = data.get("matched_capabilities") or []
+    score.llm_practice_groups = data.get("practice_groups") or []
     score.llm_relevant_projects = data.get("relevant_projects") or []
     score.llm_key_requirements = data.get("key_requirements") or []
     score.llm_gaps = data.get("gaps") or []
@@ -177,7 +182,7 @@ def run_llm_assessment(
     far better prefilter than the score, and it drops roughly half the open
     notices before a single token is spent.
     """
-    from api.scoring.llm import LLMScorer, MIN_CACHEABLE_TOKENS
+    from scoring.llm import LLMScorer, MIN_CACHEABLE_TOKENS
 
     query = (
         db.query(TenderScore, Tender)
@@ -185,6 +190,8 @@ def run_llm_assessment(
         .filter(
             Tender.notice_status == "Published",
             Tender.notice_type.in_(ACTIONABLE_NOTICE_TYPES),
+            # Never pay for the same notice twice; see `active_tender_query`.
+            Tender.duplicate_of_id.is_(None),
             or_(
                 Tender.submission_deadline.is_(None),
                 Tender.submission_deadline >= datetime.now(timezone.utc),
@@ -193,12 +200,13 @@ def run_llm_assessment(
     )
 
     if consulting_only:
-        # General Procurement Notices carry no procurement group but announce
-        # upcoming work, so they are kept alongside the consulting notices.
+        # General Procurement Notices and ADB's Advance Notices carry no
+        # procurement group but announce upcoming work, so they are kept
+        # alongside the consulting notices.
         query = query.filter(
             or_(
                 Tender.procurement_group.in_(BIDDABLE_PROCUREMENT_GROUPS),
-                Tender.notice_type == "General Procurement Notice",
+                Tender.notice_type.in_(("General Procurement Notice", "Advance Notice")),
             )
         )
     if min_heuristic_score is not None:

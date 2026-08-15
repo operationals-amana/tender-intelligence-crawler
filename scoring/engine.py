@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from api.scoring.matcher import (
+# Re-exported below for the callers that have always imported it from here.
+from crawler.sources import ACTIONABLE_NOTICE_TYPES  # noqa: F401
+from scoring.matcher import (
     CapabilityMatcher,
     DomainMatch,
     ProjectMatch,
@@ -31,19 +33,16 @@ DEADLINE_HORIZON_DAYS = 90
 # Below this many days a bid is realistically too tight to mobilise for.
 DEADLINE_RISK_DAYS = 14
 
-# Notice types that represent an actual biddable opportunity. Contract Awards
-# are deliberately excluded: they are closed by definition, and because they
-# carry no submission deadline they would otherwise pass an "open tender" filter.
-ACTIONABLE_NOTICE_TYPES = {
-    "Request for Expression of Interest",
-    "Invitation for Bids",
-    "Invitation for Prequalification",
-    "Specific Procurement Notice",
-    "General Procurement Notice",
-    "Request for Proposals",
-}
+# `ACTIONABLE_NOTICE_TYPES` — the notice types that represent an actual biddable
+# opportunity — is imported at the top of this module and re-exported from here,
+# where it used to be defined. It moved to `crawler/sources.py` because duplicate
+# linking needs the same set, and reaching into the scoring engine for it would
+# drag scikit-learn into a crawl that has no use for it.
 
 # AMANA is an advisory firm: consulting-services notices are the target market.
+# ADB's notices for consulting *firms* are normalized to this same group, while
+# its individual-expert assignments carry `IC` and stay out — a firm cannot bid
+# a named-person contract. See `crawler/adb_parsers.py`.
 PREFERRED_PROCUREMENT_GROUPS = {"CS"}
 
 # Countries where AMANA has an established presence.
@@ -399,7 +398,7 @@ class ScoringEngine:
         breakdown.gaps = identify_gaps(domain_matches, breakdown)
         breakdown.risks = identify_risks(tender, breakdown, project_matches)
 
-        from api.scoring.explainer import build_explanation
+        from scoring.explainer import build_explanation
 
         breakdown.explanation = build_explanation(tender, breakdown)
         return breakdown

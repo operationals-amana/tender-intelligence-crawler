@@ -11,12 +11,13 @@ from datetime import datetime, timezone
 from itemadapter import ItemAdapter
 from sqlalchemy.exc import SQLAlchemyError
 
-from crawler.database import get_db, init_db
+from crawler.database import check_connection, get_db
 from crawler.models import CrawlError, Tender
 
 # Columns copied straight from the item onto the Tender row.
 TENDER_FIELDS = [
     "notice_id",
+    "source",
     "notice_type",
     "noticedate",
     "notice_status",
@@ -40,6 +41,7 @@ TENDER_FIELDS = [
     "parsed_fields",
     "notice_url",
     "content_hash",
+    "dedup_key",
 ]
 
 # Flush to Postgres every N notices rather than per row.
@@ -61,7 +63,7 @@ class PostgresPipeline:
     """Upsert notices, tracking new/updated/unchanged counts on the spider."""
 
     def open_spider(self, spider):
-        init_db()
+        check_connection()
         self.db = get_db()
         # Notices buffered since the last commit, so a failed batch can be
         # retried one row at a time instead of discarding all of them.
@@ -89,6 +91,8 @@ class PostgresPipeline:
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
         values = {field: adapter.get(field) for field in TENDER_FIELDS}
+        # Carried alongside the columns, not as one; `_write` consumes it.
+        values["_partial"] = bool(adapter.get("partial"))
         self.batch.append(values)
 
         if len(self.batch) >= BATCH_SIZE:
@@ -121,7 +125,9 @@ class PostgresPipeline:
         counts = {"new": 0, "updated": 0, "unchanged": 0}
         now = datetime.now(timezone.utc)
 
-        for values in batch:
+        for row in batch:
+            values = {k: v for k, v in row.items() if k != "_partial"}
+            partial = row.get("_partial", False)
             notice_id = values["notice_id"]
             existing = (
                 self.db.query(Tender).filter(Tender.notice_id == notice_id).one_or_none()
@@ -148,6 +154,8 @@ class PostgresPipeline:
                 continue
 
             deadline_moved = existing.submission_deadline != values.get("submission_deadline")
+            if partial:
+                values = self._without_blanks(existing, values)
             for field, value in values.items():
                 setattr(existing, field, value)
             existing.change_flag = "extended" if deadline_moved else "modified"
@@ -156,6 +164,44 @@ class PostgresPipeline:
             counts["updated"] += 1
 
         return counts
+
+    @staticmethod
+    def _without_blanks(existing, values: dict) -> dict:
+        """Drop the fields a partial item has nothing to say about.
+
+        A notice whose body could not be fetched still arrives as a full item,
+        with the body, the contacts and the extracted budget simply absent. Left
+        alone, the update would write those blanks over a body we already have
+        and successfully stored on an earlier crawl -- so one timed-out detail
+        page would silently strip a notice back to its metadata.
+
+        `parsed_fields` is merged rather than dropped: the partial item carries
+        real facts from the listing, and the stored copy carries the ones the
+        detail page contributed.
+
+        `content_hash` is *not* protected, deliberately. It records what the
+        crawl fetched rather than what the row now holds, so after a partial
+        update it no longer matches the stored body — which is what makes the
+        next successful crawl see a difference and re-sync the row instead of
+        reading "unchanged" and leaving a half-written notice in place.
+        """
+        kept = {}
+        for field, value in values.items():
+            current = getattr(existing, field, None)
+
+            if field == "parsed_fields":
+                if isinstance(current, dict) and isinstance(value, dict):
+                    kept[field] = {**current, **value}
+                else:
+                    kept[field] = value or current
+                continue
+
+            # Only a *blank* new value defers to the stored one. A partial item
+            # that actually carries a field is still the fresher answer.
+            if value in (None, "") and current not in (None, ""):
+                continue
+            kept[field] = value
+        return kept
 
     def _write_individually(self, spider, batch) -> dict:
         counts = {"new": 0, "updated": 0, "unchanged": 0}

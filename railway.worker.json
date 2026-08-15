@@ -1,13 +1,14 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "//": "Crawler worker. Deploy a SECOND Railway service from this same repo, set its config path to railway.worker.json, and share the API service's DATABASE_URL. It has no HTTP port, so it gets no healthcheck and no public domain.",
+  "//": "Batch alternative to railway.json, for a deployment that wants the recurring cycle and nothing else. Attach a cron schedule in Settings -> Cron Schedule ('0 */12 * * *' for the same 12-hourly cadence); the container runs one cycle and exits, so it only bills for the minutes the job actually runs. The cost is the dashboard's 'Start crawling' button: there is no process between runs to answer it, so the button will report the crawler as unreachable. Use railway.json unless that trade is deliberate.",
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "./docker-entrypoint.sh worker",
-    "restartPolicyType": "ALWAYS",
+    "startCommand": "./docker-entrypoint.sh cron",
+    "//": "NEVER on a cron service: the job is supposed to exit, and a restart policy would relaunch it in a loop.",
+    "restartPolicyType": "NEVER",
     "numReplicas": 1
   }
 }

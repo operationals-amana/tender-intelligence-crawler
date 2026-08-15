@@ -11,9 +11,12 @@ from a keyword taxonomy rather than read off the payload.
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 from lxml import html as lxml_html
+
+from crawler.sources import WORLD_BANK
 
 # Sector taxonomy. Keys are the canonical sector labels we store; values are the
 # keywords that, when present in the notice text, imply that sector. Ordered
@@ -87,6 +90,117 @@ def hash_response(data: dict) -> str:
     """Stable SHA256 of a raw notice payload, used for change detection."""
     raw = json.dumps(data, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+# Words that carry no distinguishing signal in a procurement title. Stripping
+# them before fingerprinting means "Consulting Services for the Supply of X" and
+# "Supply of X" fingerprint alike, which is the whole point of the key.
+_DEDUP_STOPWORDS = frozenset(
+    """
+    a an and are as at be by for from in into of on or over the to under with
+    services service consulting consultancy consultant firm procurement notice
+    invitation request bids bid proposals proposal expression expressions
+    interest tender tenders contract contracts project package lot
+    """.split()
+)
+
+_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+
+# Country names as each bank writes them, mapped to one label so a fingerprint
+# built from a World Bank notice can match one built from an ADB notice.
+#
+# The two feeds agree far more than they disagree -- both write "Viet Nam",
+# "Lao People's Democratic Republic" and "Kyrgyz Republic" -- so this is short by
+# design and covers only the divergences actually observed in the two country
+# lists. Anything absent falls through to the accent-stripped name, which is what
+# reconciles "Türkiye" with "Turkiye" without an entry of its own.
+_COUNTRY_ALIASES = {
+    "china, people's republic of": "china",
+    "china, peoples republic of": "china",
+    "hong kong, china": "hong kong",
+    "korea, republic of": "korea",
+    "micronesia, federated states of": "micronesia",
+    "russian federation": "russia",
+    "egypt, arab republic of": "egypt",
+    "gambia, the": "gambia",
+    "syrian arab republic": "syria",
+    "lao pdr": "lao people's democratic republic",
+    "vietnam": "viet nam",
+    "kyrgyzstan": "kyrgyz republic",
+    "turkey": "turkiye",
+}
+
+
+def normalize_country(value: str) -> str:
+    """Fold a country name to the form both feeds agree on.
+
+    Accents are stripped before the alias lookup, so "Türkiye" and "Turkiye" are
+    already one string by the time the table is consulted.
+    """
+    if not value:
+        return ""
+    folded = unicodedata.normalize("NFKD", str(value).strip().lower())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = _WS_RE.sub(" ", folded)
+    return _COUNTRY_ALIASES.get(folded, folded)
+
+
+def dedup_tokens(title: str) -> frozenset:
+    """The distinguishing words of a notice title, lowercased and deduplicated.
+
+    Returned as a set rather than a sequence because the same opportunity is
+    routinely advertised with the words in a different order.
+
+    **Numbers are kept whatever their length.** A bank splits one procurement
+    into lots and batches and distinguishes them by nothing but a digit —
+    "Batch No. 8" against "Batch No. 2", "specialist 1" against "specialist 2",
+    "52 Secondary Schools" against "42". Dropping short tokens throws away
+    exactly the character that makes those separate contracts, and two distinct
+    lots then fingerprint identically. Short *alphabetic* fragments are still
+    dropped: those are the roman numerals and country codes that genuinely do
+    vary between two postings of one package.
+    """
+    if not title:
+        return frozenset()
+    words = _NON_WORD_RE.sub(" ", title.lower()).split()
+    return frozenset(
+        w
+        for w in words
+        if (len(w) > 2 or w.isdigit()) and w not in _DEDUP_STOPWORDS
+    )
+
+
+def build_dedup_key(title: str, country: str = None, deadline=None) -> str:
+    """Fingerprint the *opportunity*, so two feeds advertising it agree.
+
+    Distinct from ``content_hash``, which fingerprints the notice text and
+    answers "has this row changed since we last saw it". This one answers "is
+    this the same piece of work as that row", and so is deliberately built from
+    only the three facts that survive being republished by another financier:
+    the significant words of the title, the country, and the closing date.
+
+    Returns an empty string -- meaning "do not group this row with anything" --
+    when either the title carries no distinguishing words or there is no closing
+    date. **Both** are required, and the deadline especially: banks advertise
+    dozens of separate contracts under one generic description, and on the live
+    table "Supply of Laboratory Equipment" in Eastern and Southern Africa named
+    ninety distinct awards. Title and country alone are not an identity; the
+    date is what makes them one.
+    """
+    tokens = dedup_tokens(title)
+    if not tokens or deadline is None:
+        return ""
+    parts = [
+        " ".join(sorted(tokens)),
+        # Folded, not raw: the banks spell a handful of countries differently,
+        # and a fingerprint that disagrees on the spelling can never match
+        # across them — which is the one job it has.
+        normalize_country(country),
+        # Date only. The two feeds routinely disagree on the hour of a shared
+        # deadline, and an opportunity does not stop being the same one at 5pm.
+        deadline.date().isoformat() if hasattr(deadline, "date") else "",
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 def strip_html(raw: str) -> str:
@@ -313,19 +427,23 @@ def normalize_notice_item(raw_item: dict) -> dict:
     method_name = _text(raw_item.get("procurement_method_name"), 100)
 
     notice_id = _text(raw_item.get("id"), 50)
+    country = _text(raw_item.get("project_ctry_name"), 100)
+    deadline = _combine_deadline(
+        raw_item.get("submission_deadline_date"),
+        raw_item.get("submission_deadline_time"),
+    )
+    title = _text(raw_item.get("bid_description")) or _text(raw_item.get("project_name")) or ""
 
     return {
         "notice_id": notice_id,
+        "source": WORLD_BANK,
         "notice_type": _text(raw_item.get("notice_type"), 100),
         "noticedate": parse_noticedate(raw_item.get("noticedate")),
         "notice_status": _text(raw_item.get("notice_status"), 50) or "Published",
-        "submission_deadline": _combine_deadline(
-            raw_item.get("submission_deadline_date"),
-            raw_item.get("submission_deadline_time"),
-        ),
+        "submission_deadline": deadline,
         "project_id": _text(raw_item.get("project_id"), 50),
         "project_name": _text(raw_item.get("project_name")),
-        "project_country": _text(raw_item.get("project_ctry_name"), 100),
+        "project_country": country,
         "bid_reference_no": _text(raw_item.get("bid_reference_no"), 100),
         "bid_description": _text(raw_item.get("bid_description")),
         "procurement_group": group_code,
@@ -346,4 +464,5 @@ def normalize_notice_item(raw_item: dict) -> dict:
             if notice_id
             else None
         ),
+        "dedup_key": build_dedup_key(title, country, deadline),
     }

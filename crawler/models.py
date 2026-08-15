@@ -1,3 +1,18 @@
+"""SQLAlchemy mappings for the tables this service touches.
+
+The schema is **owned by the tender-intelligence app**, which defines it in
+`lib/db/schema.ts` and migrates it with drizzle-kit. Nothing here creates or
+alters a table; these classes exist only so the crawler and the scoring pass can
+read and write rows.
+
+Only the tables this service actually uses are mapped. Application-side tables —
+users, saved searches, tender notes, project sectors — are absent on purpose: an
+unused mapping is a schema claim nobody verifies, and it would drift.
+
+Written here:  tenders, crawl_runs, crawl_errors, tender_scores
+Read here:     practice_groups, capability_domains, employees, employee_skills,
+               past_projects, associations
+"""
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Text, Integer, Float, Boolean, DateTime, Date, ForeignKey, JSON, ARRAY, DECIMAL, Index, UniqueConstraint
@@ -12,6 +27,8 @@ class Tender(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     notice_id = Column(String(50), unique=True, nullable=False, index=True)
+    # Which upstream feed published this notice; see crawler/sources.py.
+    source = Column(String(20), nullable=False, default="worldbank", index=True)
     notice_type = Column(String(100), index=True)
     noticedate = Column(Date, index=True)
     notice_status = Column(String(50), default="Published", index=True)
@@ -38,6 +55,19 @@ class Tender(Base):
     parsed_fields = Column(JSONB, default=dict)
     notice_url = Column(Text)
     content_hash = Column(String(64))
+    # Fingerprint of the opportunity itself rather than of the notice text:
+    # normalized title + country + closing date. Two rows sharing it describe
+    # the same procurement, whether they came from one feed or two.
+    dedup_key = Column(String(64), index=True)
+    # Set on the *non*-canonical row of a duplicate group, pointing at the row
+    # that represents the group. Null on canonical rows and on unique notices,
+    # so `duplicate_of_id IS NULL` is the "show me each opportunity once" filter.
+    # Deliberately a link and not a merge: deadlines, reference numbers and
+    # submission channels differ per financier, and merging would lose exactly
+    # the detail somebody needs in order to actually bid.
+    duplicate_of_id = Column(
+        UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="SET NULL"), index=True
+    )
     first_seen_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     last_crawled_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -49,13 +79,6 @@ class Tender(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
-    notes = relationship(
-        "TenderNote",
-        back_populates="tender",
-        cascade="all, delete-orphan",
-        order_by="desc(TenderNote.created_at)",
-    )
-
     __table_args__ = (
         Index("ix_tenders_parsed_fields", "parsed_fields", postgresql_using="gin"),
         Index("ix_tenders_status_deadline", "notice_status", "submission_deadline"),
@@ -84,42 +107,6 @@ class CrawlError(Base):
     error_message = Column(Text)
     error_type = Column(String(100))
     occurred_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class SavedSearch(Base):
-    __tablename__ = "saved_searches"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(200))
-    filters = Column(JSONB, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class TenderNote(Base):
-    __tablename__ = "tender_notes"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tender_id = Column(UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="CASCADE"), index=True)
-    note = Column(Text)
-    created_by = Column(String(100))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-    tender = relationship("Tender", back_populates="notes")
-
-
-class User(Base):
-    """An application user. Passwords are stored only as bcrypt hashes."""
-
-    __tablename__ = "users"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(200), unique=True, nullable=False, index=True)
-    full_name = Column(String(200))
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(30), default="member")
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    last_login_at = Column(DateTime(timezone=True))
 
 
 class PracticeGroup(Base):
@@ -222,13 +209,6 @@ class PastProject(Base):
     )
 
 
-class ProjectSector(Base):
-    __tablename__ = "project_sectors"
-
-    project_id = Column(UUID(as_uuid=True), ForeignKey("past_projects.id", ondelete="CASCADE"), primary_key=True)
-    sector_tag = Column(String(100), primary_key=True)
-
-
 class Association(Base):
     __tablename__ = "associations"
 
@@ -281,6 +261,10 @@ class TenderScore(Base):
     llm_key_requirements = Column(ARRAY(String))
     llm_gaps = Column(ARRAY(String))
     llm_risks = Column(ARRAY(String))
+    # Practice groups Claude named for this notice, verbatim. The resolved
+    # classification lives in tender_practice_groups, which the app writes;
+    # this is the raw signal that pass reads.
+    llm_practice_groups = Column(ARRAY(String))
     # [{"name": ..., "role": ...}] — suggested bid team from the roster.
     llm_suggested_team = Column(JSONB)
     llm_model = Column(String(60))

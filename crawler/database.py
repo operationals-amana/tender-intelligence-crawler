@@ -2,13 +2,11 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from crawler.models import Base
-
-# Load the project-level .env before reading any settings, so running the
-# crawler, the seeders and uvicorn all pick up the same configuration.
+# Load the project-level .env before reading any settings, so the crawler and
+# the scoring pass both pick up the same configuration.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DATABASE_URL = os.getenv(
@@ -25,26 +23,16 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def init_db():
-    """Create any missing tables, for local development convenience.
+def check_connection():
+    """Fail fast with a clear message if the database is unreachable.
 
-    Disabled by setting AUTO_CREATE_TABLES=false, which is what deployments
-    should do: there, `alembic upgrade head` owns the schema. If create_all runs
-    first on a fresh database it builds the tables without an alembic_version
-    row, and the subsequent migration then fails trying to create them again.
+    This service does **not** own the schema — the tender-intelligence app does,
+    via its Drizzle migrations. There is deliberately no ``create_all`` here: two
+    tools creating the same tables is how you end up with a database that neither
+    of them can migrate. If a table is missing, run ``npm run db:migrate`` there.
     """
-    if os.getenv("AUTO_CREATE_TABLES", "true").lower() in ("false", "0", "no"):
-        return
-    Base.metadata.create_all(bind=engine)
-
-
-def get_session():
-    """FastAPI dependency yielding a session that is always closed."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 
 
 def get_db() -> Session:

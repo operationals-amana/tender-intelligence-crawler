@@ -1,16 +1,16 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "//": "API service. Deploy this repo as a Railway service with a Postgres plugin attached; set DATABASE_URL, JWT_SECRET, CORS_ORIGINS and AUTO_CREATE_TABLES=false in the service variables. The entrypoint applies migrations before uvicorn starts.",
+  "//": "Crawler + scoring service. Deploy this repo as a Railway service sharing the tender-intelligence app's DATABASE_URL. The `serve` role runs the full cycle every CRAWL_INTERVAL_HOURS (12) and serves POST /crawl, which is what the app's dashboard button calls -- so set CRAWLER_TRIGGER_TOKEN here and to the same value in the app, and point the app's CRAWLER_URL at this service's *private* domain (http://<service>.railway.internal:8080). It needs no public domain: only the app calls it. Set ANTHROPIC_API_KEY to enable the assessment stage; without it the cycle still crawls and heuristically scores.",
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "./docker-entrypoint.sh api",
+    "startCommand": "./docker-entrypoint.sh serve",
+    "//": "ALWAYS, unlike the batch roles: this one is a server, so an exit is a fault and should be restarted. The single-slot guard lives in the process, so keep this at one replica -- two would each schedule their own cycle.",
+    "restartPolicyType": "ALWAYS",
+    "numReplicas": 1,
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 100,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3,
-    "numReplicas": 1
+    "healthcheckTimeout": 30
   }
 }

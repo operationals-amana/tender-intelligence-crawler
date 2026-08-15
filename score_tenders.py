@@ -10,8 +10,8 @@ the shortlist that stage 1 produced.
 """
 import argparse
 
-from api.scoring.runner import run_llm_assessment, score_tenders
-from crawler.database import get_db, init_db
+from scoring.runner import run_llm_assessment, score_tenders
+from crawler.database import check_connection, get_db
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--llm-concurrency", type=int, default=4, help="Parallel Claude requests")
     args = parser.parse_args()
 
-    init_db()
+    check_connection()
     db = get_db()
     try:
         if not args.llm_only:
