@@ -25,6 +25,12 @@ no process between runs to answer anything. `cron` remains the cheaper choice if
 you are willing to give that button up — see
 [Batch alternative](#batch-alternative).
 
+`serve` runs its cycle at fixed clock times in `CRAWL_TIMEZONE` wherever the
+cadence divides the day evenly — the default 12h means 00:00 and 12:00 Jakarta
+time. A redeploy therefore no longer drags the crawl times along with it, and
+`GET /status` can report a `next_run_at` the dashboard counts down to. A cadence
+that does not divide the day (7h, say) falls back to counting from start-up.
+
 ## The trigger endpoint
 
 `serve` listens on `PORT` (8080 by default):
@@ -79,6 +85,7 @@ CRAWL_DAYS=7
 CRAWL_ROWS=500
 CRAWL_SOURCE=all
 CRAWL_INTERVAL_HOURS=12
+CRAWL_TIMEZONE=Asia/Jakarta
 CRAWLER_TRIGGER_TOKEN=<openssl rand -hex 32>
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-haiku-4-5

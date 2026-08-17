@@ -3,7 +3,8 @@
 ``cron.py`` runs one cycle and exits, which is all a platform cron scheduler
 needs. This module is the other deployment shape — one always-on container that
 
-  * runs the same full cycle every ``CRAWL_INTERVAL_HOURS`` (12 by default), and
+  * runs the same full cycle every ``CRAWL_INTERVAL_HOURS`` (12 by default), at
+    fixed clock times in ``CRAWL_TIMEZONE`` (Asia/Jakarta by default), and
   * exposes a small HTTP endpoint so the dashboard's "Start crawling" button can
     ask for a cycle now.
 
@@ -32,7 +33,7 @@ therefore launched as ``python cron.py``, exactly as ``run_crawler.py
 Endpoints
 ---------
 ``GET  /health``   liveness, unauthenticated — the only thing a platform probe needs
-``GET  /status``   is a cycle running, what triggered it, how the last one ended
+``GET  /status``   is a cycle running, when the next one is due, how the last one ended
 ``POST /crawl``    start a cycle now; 202 if it started, 409 if one is running
 """
 # The image runs 3.11, but a developer's system Python may be older and
@@ -176,6 +177,10 @@ class JobRunner:
                 else None
             ),
             "interval_hours": SCHEDULE_HOURS,
+            # The dashboard counts down to this, so it is reported whether or
+            # not a crawl is running: a manual crawl does not move the schedule.
+            "next_run_at": _next_run_at(),
+            "schedule_timezone": SCHEDULE_TZ,
             "last_run": self._last,
         }
 
@@ -216,8 +221,29 @@ class JobRunner:
 # The runner is process-wide state: the HTTP handler class is instantiated per
 # request, so it cannot own it.
 SCHEDULE_HOURS = int(os.getenv("CRAWL_INTERVAL_HOURS", "12"))
+# The team reads this dashboard in Jakarta, so the crawl times are set on their
+# clock rather than on UTC: "midnight and noon" should mean their midnight.
+# Left as a name rather than a tzinfo object: APScheduler resolves it, and
+# `zoneinfo` would make this module unimportable on the 3.8 a developer may
+# still have as their system Python.
+SCHEDULE_TZ = os.getenv("CRAWL_TIMEZONE", "Asia/Jakarta")
 RUNNER: Optional[JobRunner] = None
+SCHEDULER: Optional[Any] = None
 TOKEN = os.getenv("CRAWLER_TRIGGER_TOKEN", "").strip()
+
+
+def _next_run_at() -> Optional[str]:
+    """When the schedule fires next, as UTC ISO-8601, or None before start-up.
+
+    Read from the scheduler rather than computed from the last run: those two
+    agree only while nothing has been triggered by hand, and after a manual
+    crawl the schedule is the one telling the truth.
+    """
+    if SCHEDULER is None:
+        return None
+    job = SCHEDULER.get_job("crawl_cycle")
+    moment = getattr(job, "next_run_time", None) if job else None
+    return _stamp(moment.astimezone(timezone.utc)) if moment else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -316,8 +342,32 @@ def _scheduled_cycle() -> None:
     RUNNER.start(trigger="schedule")
 
 
+def _build_trigger():
+    """The recurrence, as fixed clock times where the cadence allows it.
+
+    An interval trigger counts from the moment the scheduler starts, so the
+    crawl times drift to wherever the last deploy happened to land — a service
+    redeployed at 14:20 crawls at 02:20 and 14:20 until the next deploy moves it
+    again. That is fine for a job nobody watches, but the dashboard now counts
+    down to the next run, and a countdown to a time that moves on every deploy
+    is worse than none.
+
+    So when the cadence divides the day evenly — 12h, 8h, 6h, the realistic
+    settings — it becomes a cron trigger on the hour, starting at midnight
+    Jakarta time. Anything else (7h, say) has no fixed times to sit on and keeps
+    the plain interval.
+    """
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    if 0 < SCHEDULE_HOURS <= 24 and 24 % SCHEDULE_HOURS == 0:
+        hours = ",".join(str(hour) for hour in range(0, 24, SCHEDULE_HOURS))
+        return CronTrigger(hour=hours, minute=0, timezone=SCHEDULE_TZ)
+    return IntervalTrigger(hours=SCHEDULE_HOURS, timezone=SCHEDULE_TZ)
+
+
 def main() -> int:
-    global RUNNER
+    global RUNNER, SCHEDULER
 
     if not TOKEN:
         print(
@@ -339,18 +389,22 @@ def main() -> int:
 
     from apscheduler.schedulers.background import BackgroundScheduler
 
-    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler = BackgroundScheduler(timezone=SCHEDULE_TZ)
     scheduler.add_job(
         _scheduled_cycle,
-        "interval",
-        hours=SCHEDULE_HOURS,
+        _build_trigger(),
         id="crawl_cycle",
         # The runner's single slot already prevents overlap; this keeps
         # APScheduler from stacking up missed ticks behind a long crawl.
         max_instances=1,
         coalesce=True,
+        # A cycle runs for minutes and a deploy can land on top of a fire time.
+        # Without this, a tick the restart made a few minutes late is dropped
+        # and the feeds go a full period unread.
+        misfire_grace_time=1800,
     )
     scheduler.start()
+    SCHEDULER = scheduler
 
     port = int(os.getenv("PORT", "8080"))
     try:
@@ -370,9 +424,11 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    next_run = SCHEDULER.get_job("crawl_cycle").next_run_time
     _log(
         f"Listening on :{port}. Full cycle every {SCHEDULE_HOURS}h "
-        f"(incremental {days}d), and on POST /crawl."
+        f"(incremental {days}d), and on POST /crawl. Next run "
+        f"{next_run.strftime('%Y-%m-%d %H:%M %Z') if next_run else 'unscheduled'}."
     )
 
     if os.getenv("CRAWL_ON_BOOT", "").lower() in ("true", "1", "yes"):
