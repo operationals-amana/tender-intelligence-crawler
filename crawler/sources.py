@@ -15,19 +15,21 @@ rewriting them to gain a prefix would be a migration that buys nothing.
 
 WORLD_BANK = "worldbank"
 ADB = "adb"
+GIZ = "giz"
 
-SOURCES = (WORLD_BANK, ADB)
+SOURCES = (WORLD_BANK, ADB, GIZ)
 
 #: Human-readable feed names, for logs and for the dashboard's source filter.
 SOURCE_LABELS = {
     WORLD_BANK: "World Bank",
     ADB: "Asian Development Bank",
+    GIZ: "GIZ (Deutsche Gesellschaft für Internationale Zusammenarbeit)",
 }
 
 #: Preference order when two feeds carry the same opportunity and one has to be
 #: named canonical. It is a tie-break, not a judgement: the earlier-seen notice
 #: wins first, and this only decides rows that arrived in the same crawl.
-CANONICAL_PRIORITY = {WORLD_BANK: 0, ADB: 1}
+CANONICAL_PRIORITY = {WORLD_BANK: 0, ADB: 1, GIZ: 2}
 
 #: Notice types that represent an actual biddable opportunity, in the shared
 #: vocabulary both feeds are normalized into.

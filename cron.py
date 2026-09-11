@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument(
         "--source",
         default=os.getenv("CRAWL_SOURCE", "all"),
-        help="Which feed to crawl: all, worldbank or adb",
+        help="Which feed to crawl: all, worldbank, adb or giz",
     )
     parser.add_argument("--crawl-only", action="store_true", help="Skip both scoring stages")
     parser.add_argument(
