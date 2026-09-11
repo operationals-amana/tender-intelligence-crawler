@@ -35,21 +35,29 @@ from scrapy.utils.project import get_project_settings
 
 from crawler.database import check_connection, get_db
 from crawler.models import CrawlRun
-from crawler.sources import ADB, SOURCES, WORLD_BANK
+from crawler.sources import ADB, GIZ, SOURCES, WORLD_BANK
 from crawler.spiders.adb_spider import AdbSpider
+from crawler.spiders.giz_spider import GizSpider
 from crawler.spiders.procurement_spider import ProcurementSpider
 
-#: Spider class and per-source crawl arguments, keyed by source name. The two
+#: Spider class and per-source crawl arguments, keyed by source name. The
 #: feeds take different arguments — the World Bank one pages an API that has no
-#: date filter, ADB's queries an index that does — so each source names the
-#: arguments it accepts rather than sharing one signature that fits neither.
+#: date filter, ADB's queries an index that does, GIZ's reads a page that has
+#: neither dates nor pages — so each source names the arguments it accepts
+#: rather than sharing one signature that fits none of them.
 SPIDERS = {
     WORLD_BANK: ProcurementSpider,
     ADB: AdbSpider,
+    GIZ: GizSpider,
 }
 
 
 def _spider_kwargs(source: str, incremental_days: int, rows: int, country: str, max_pages: int):
+    if source == GIZ:
+        # The GIZ feed is a full read of a tiny list every time: no rows to
+        # size, no pages to cap, and its countries are chosen by page URL
+        # (GIZ_TENDER_PAGES) rather than by the shared --country filter.
+        return {"incremental_days": incremental_days}
     if source == ADB:
         return {
             "incremental_days": incremental_days,

@@ -126,16 +126,17 @@ shows "Crawler offline".
 
 ## Sources
 
-Two feeds, crawled in one pass and stored in one table, each row tagged with the
-bank that published it.
+Three feeds, crawled in one pass and stored in one table, each row tagged with
+the publisher it came from.
 
 | Source      | Where the notices come from                                                                     |
 | ----------- | ----------------------------------------------------------------------------------------------- |
 | `worldbank` | The procurement-notices API on `search.worldbank.org`                                             |
 | `adb`       | The Solr index behind `adb.org/projects/tenders`, plus the consulting notice bodies in ADB's CMS  |
+| `giz`       | GIZ country-office tender pages on `giz.de` (Indonesia by default; add offices via `GIZ_TENDER_PAGES` — see `GIZ_SOURCE.md`) |
 
 `CRAWL_SOURCE` (or `--source`) narrows a run to one of them. That is for
-debugging a single bank without re-walking the other; production wants `all`.
+debugging a single feed without re-walking the others; production wants `all`.
 
 **Backfill cost.** An incremental ADB run is small — roughly 90 notices a week,
 of which the consulting ones cost one extra request each for their body. A full
