@@ -8,3 +8,7 @@ venv/
 # tender-intelligence app. Ignored so they cannot drift back in: they carry
 # KTP and BPJS numbers for every employee.
 data/
+
+# Google OAuth client for the app's SSO. Downloaded from the Cloud console and
+# never committed: the client_secret in it is a live credential.
+client_secret_*.json
