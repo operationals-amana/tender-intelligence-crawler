@@ -26,8 +26,11 @@ outside it — in the platform's cron, or in ``run_crawler.py --schedule``, whic
 launches each crawl as a subprocess.
 """
 import argparse
+import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 
 from crawler.database import check_connection, get_db
@@ -146,7 +149,44 @@ def main() -> int:
     finally:
         db.close()
 
+    # --- 5. practice-group classification --------------------------------
+    # The classifier lives in the tender-intelligence app (it is TypeScript,
+    # shared with the app's own override endpoints), so the cycle ends by
+    # asking the app to classify whatever was just written. Deliberately not
+    # counted as a failed stage: the app also runs a daily catch-up cron, so a
+    # missed call here delays classification rather than losing it.
+    _trigger_classification()
+
     return _finish(failures)
+
+
+def _trigger_classification() -> None:
+    """POST to the app's classification endpoint, if one is configured.
+
+    ``APP_CLASSIFY_URL`` is the app's ``/api/crawl/classify`` route;
+    ``CLASSIFY_TRIGGER_TOKEN`` must match the app's value of the same name.
+    The pass is idempotent and usually takes seconds, but a large catch-up can
+    run to a few minutes — hence the generous timeout.
+    """
+    url = os.getenv("APP_CLASSIFY_URL")
+    if not url:
+        return
+
+    request = urllib.request.Request(
+        url,
+        method="POST",
+        headers={"Authorization": f"Bearer {os.getenv('CLASSIFY_TRIGGER_TOKEN', '')}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=330) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        _log(
+            "Practice-group classification: "
+            f"{result.get('classified', 0)} of {result.get('read', 0)} changed "
+            f"notices classified into {result.get('assignments', 0)} assignments."
+        )
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log(f"Practice-group classification trigger failed (will catch up on the app's cron): {exc}")
 
 
 def _finish(failures) -> int:
