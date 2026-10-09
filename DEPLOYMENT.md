@@ -70,6 +70,28 @@ npm run seed          # load the capability profile
 The scoring stage matches notices against that profile and refuses to run
 without one, so seeding has to happen first. Crawling works regardless.
 
+## Calling the app at the end of a cycle
+
+Two stages of the pipeline live in the app rather than here, because both are
+TypeScript the app already owns: the practice-group classifier, and the
+notification generator. A cycle therefore ends by asking the app to run them,
+in that order.
+
+| Variable | Points at | Shared secret |
+| -------- | --------- | ------------- |
+| `APP_CLASSIFY_URL` | the app's `/api/crawl/classify` | `CLASSIFY_TRIGGER_TOKEN` |
+| `APP_NOTIFY_URL` | the app's `/api/notifications/generate` | `NOTIFY_TRIGGER_TOKEN` |
+
+Each token must equal the app's variable of the same name. Leave a URL unset
+and the call is skipped — the app runs both passes on its own cron anyway, so a
+skipped call (or a failed one) delays the work by hours rather than losing it.
+Neither counts as a failed stage in this service's exit code for that reason.
+
+**The order is not arbitrary.** Someone who filtered their alerts to one
+practice group is matched against `tender_practice_groups`, so a notice
+notified before it was classified would be judged against an empty set and
+skipped. Classification first, notifications second.
+
 ## Railway
 
 One service, sharing the app's Postgres.
