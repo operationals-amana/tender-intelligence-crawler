@@ -157,6 +157,17 @@ def main() -> int:
     # missed call here delays classification rather than losing it.
     _trigger_classification()
 
+    # --- 6. notifications -------------------------------------------------
+    # Raise the alerts for whatever this cycle turned up. Must come *after*
+    # classification: a person who restricted their alerts to one practice
+    # group is matched on `tender_practice_groups`, so a notice classified a
+    # moment later would be judged against an empty set and skipped.
+    #
+    # Same deal as above — not a counted failure, because the app's own cron
+    # runs the identical pass and the generator is idempotent, so a missed call
+    # delays an alert by hours rather than losing it.
+    _trigger_notifications()
+
     return _finish(failures)
 
 
@@ -187,6 +198,39 @@ def _trigger_classification() -> None:
         )
     except (urllib.error.URLError, OSError, ValueError) as exc:
         _log(f"Practice-group classification trigger failed (will catch up on the app's cron): {exc}")
+
+
+def _trigger_notifications() -> None:
+    """POST to the app's notification generator, if one is configured.
+
+    ``APP_NOTIFY_URL`` is the app's ``/api/notifications/generate`` route;
+    ``NOTIFY_TRIGGER_TOKEN`` must match the app's value of the same name.
+
+    The point of calling it from here is latency: the app's cron raises alerts
+    on a schedule, but a notice assessed as a strong fit two minutes ago is
+    worth telling somebody about now, not at the next tick. Two indexed queries
+    per active account, so the timeout is short.
+    """
+    url = os.getenv("APP_NOTIFY_URL")
+    if not url:
+        return
+
+    request = urllib.request.Request(
+        url,
+        method="POST",
+        headers={"Authorization": f"Bearer {os.getenv('NOTIFY_TRIGGER_TOKEN', '')}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=130) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        _log(
+            "Notifications: "
+            f"{result.get('created', 0)} raised across {result.get('users', 0)} "
+            f"recipients ({result.get('new_opportunities', 0)} opportunity, "
+            f"{result.get('deadlines', 0)} deadline)."
+        )
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log(f"Notification trigger failed (will catch up on the app's cron): {exc}")
 
 
 def _finish(failures) -> int:
