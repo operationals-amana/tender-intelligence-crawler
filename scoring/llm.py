@@ -91,13 +91,22 @@ ASSESSMENT_SCHEMA = {
             "description": (
                 "Which of AMANA's client-facing practice groups this opportunity belongs to, "
                 "most relevant first. Choose only from: Strategy and Transformation, Digital, "
-                "Health, Education. Name a second or third group only where the scope genuinely "
-                "draws on it -- a national health data platform is Health and Digital both. "
-                "Return an empty array when the scope sits outside all four."
+                "Health, Education, Sustainability. Name a second or third group only where the "
+                "scope genuinely draws on it -- a national health data platform is Health and "
+                "Digital both. Sustainability is climate finance and adaptation, green transition "
+                "and environmental and social safeguards advisory, not any project that happens "
+                "to carry a climate label. Return an empty array when the scope sits outside all "
+                "five."
             ),
             "items": {
                 "type": "string",
-                "enum": ["Strategy and Transformation", "Digital", "Health", "Education"],
+                "enum": [
+                    "Strategy and Transformation",
+                    "Digital",
+                    "Health",
+                    "Education",
+                    "Sustainability",
+                ],
             },
         },
         "suggested_team": {
