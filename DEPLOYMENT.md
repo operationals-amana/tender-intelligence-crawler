@@ -60,11 +60,13 @@ curl      http://localhost:8080/status -H "X-Trigger-Token: $CRAWLER_TRIGGER_TOK
 ## Before the first run
 
 The schema and the company data are the app's responsibility, not this
-service's. From the `tender-intelligence` repo, against the same database:
+service's. The tender tables now live in the **`tender` schema of the shared
+AMANA Workspace database** — set `DB_SCHEMA=tender` here. From the
+`amana-workspace` repo, against the same database:
 
 ```bash
-npm run db:migrate    # create the schema
-npm run seed          # load the capability profile
+npm run db:migrate    # create every module schema (ai, emma, tender)
+npm run seed:tender   # load the capability profile
 ```
 
 The scoring stage matches notices against that profile and refuses to run
@@ -79,8 +81,8 @@ in that order.
 
 | Variable | Points at | Shared secret |
 | -------- | --------- | ------------- |
-| `APP_CLASSIFY_URL` | the app's `/api/crawl/classify` | `CLASSIFY_TRIGGER_TOKEN` |
-| `APP_NOTIFY_URL` | the app's `/api/notifications/generate` | `NOTIFY_TRIGGER_TOKEN` |
+| `APP_CLASSIFY_URL` | the app's `/api/tender/crawl/classify` | `CLASSIFY_TRIGGER_TOKEN` |
+| `APP_NOTIFY_URL` | the app's `/api/tender/notifications/generate` | `NOTIFY_TRIGGER_TOKEN` |
 
 Each token must equal the app's variable of the same name. Leave a URL unset
 and the call is skipped — the app runs both passes on its own cron anyway, so a
@@ -102,7 +104,8 @@ One service, sharing the app's Postgres.
 **2. Variables:**
 
 ```
-DATABASE_URL=${{Postgres.DATABASE_URL}}
+DATABASE_URL=<the shared AMANA Workspace DB — Supabase session pooler or direct, port 5432>
+DB_SCHEMA=tender
 CRAWL_DAYS=7
 CRAWL_ROWS=500
 CRAWL_SOURCE=all
@@ -234,7 +237,9 @@ To run the UI in the same stack, use the compose file in the parent directory.
 ## Database
 
 Any Postgres works — Railway's plugin, Supabase, RDS. Point `DATABASE_URL` at the
-same database the app uses. On Supabase use the pooled connection string and keep
+same database the AMANA Workspace app uses and set `DB_SCHEMA=tender`: ORM
+statements are schema-qualified via `schema_translate_map` (so even the transaction
+pooler works) and the connection's `search_path` is set too. On Supabase keep
 `DB_POOL_SIZE` small; the pooler counts every connection against the project
 limit, and this job holds connections for the length of a crawl.
 

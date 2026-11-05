@@ -13,5 +13,5 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://pguser:pgpass123@localhost:5433/tender-intelligence",
+    "postgresql://pguser:pgpass123@localhost:5433/amana-workspace",
 )

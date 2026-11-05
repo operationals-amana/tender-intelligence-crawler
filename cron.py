@@ -174,7 +174,7 @@ def main() -> int:
 def _trigger_classification() -> None:
     """POST to the app's classification endpoint, if one is configured.
 
-    ``APP_CLASSIFY_URL`` is the app's ``/api/crawl/classify`` route;
+    ``APP_CLASSIFY_URL`` is the app's ``/api/tender/crawl/classify`` route;
     ``CLASSIFY_TRIGGER_TOKEN`` must match the app's value of the same name.
     The pass is idempotent and usually takes seconds, but a large catch-up can
     run to a few minutes — hence the generous timeout.
@@ -203,7 +203,7 @@ def _trigger_classification() -> None:
 def _trigger_notifications() -> None:
     """POST to the app's notification generator, if one is configured.
 
-    ``APP_NOTIFY_URL`` is the app's ``/api/notifications/generate`` route;
+    ``APP_NOTIFY_URL`` is the app's ``/api/tender/notifications/generate`` route;
     ``NOTIFY_TRIGGER_TOKEN`` must match the app's value of the same name.
 
     The point of calling it from here is latency: the app's cron raises alerts
